@@ -4,7 +4,7 @@ Vagrant.configure("2") do |config|
   # Базовая конфигурация
   config.vm.box = "ubuntu/jammy64"
   config.vm.provider :virtualbox do |v|
-    v.memory = 1512
+    v.memory = 4096
     v.cpus = 2
   end
 
