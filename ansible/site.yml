@@ -19,6 +19,15 @@
         mode: '0755'
       when: "'log' in group_names"
 
+    - name: Create subdirectory for web host
+      file:
+        path: /var/log/rsyslog/web
+        state: directory
+        owner: syslog
+        group: adm
+        mode: '0755'
+      when: "'log' in group_names"
+
     - name: Configure rsyslog as server (log)
       copy:
         dest: /etc/rsyslog.d/50-default.conf
