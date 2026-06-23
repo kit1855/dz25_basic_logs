@@ -4,7 +4,7 @@ Vagrant.configure("2") do |config|
   # Базовая конфигурация
   config.vm.box = "ubuntu/jammy64"
   config.vm.provider :virtualbox do |v|
-    v.memory = 4096
+    v.memory = 1512
     v.cpus = 2
   end
 
@@ -27,6 +27,17 @@ Vagrant.configure("2") do |config|
           systemctl enable nginx
           systemctl start nginx
         SHELL
+      end
+
+      # Запуск Ansible после создания последней ВМ (log)
+      if opts[:name] == boxes.last[:name]
+        config.vm.provision "ansible" do |ansible|
+          ansible.playbook = "/vagrant/ansible/site.yml"
+          ansible.inventory_path = "/vagrant/ansible/inventory.yml"
+          ansible.host_key_checking = "false"
+          ansible.limit = "all"
+          ansible.verbose = "v"
+        end
       end
     end
   end

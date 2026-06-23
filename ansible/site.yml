@@ -1,0 +1,84 @@
+---
+- name: Setup centralized logging
+  hosts: all
+  become: yes
+  tasks:
+    - name: Ensure rsyslog is installed
+      apt:
+        name: rsyslog
+        state: present
+        update_cache: yes
+      when: "'log' in group_names"
+
+    - name: Create directory for remote logs
+      file:
+        path: /var/log/rsyslog
+        state: directory
+        owner: syslog
+        group: adm
+        mode: '0755'
+      when: "'log' in group_names"
+
+    - name: Configure rsyslog as server (log)
+      copy:
+        dest: /etc/rsyslog.d/50-default.conf
+        content: |
+          $template RemoteLogs,"/var/log/rsyslog/%HOSTNAME%/%PROGRAMNAME%.log"
+          *.* ?RemoteLogs
+      notify: restart rsyslog
+      when: "'log' in group_names"
+
+    - name: Ensure nginx is installed (web)
+      apt:
+        name: nginx
+        state: present
+        update_cache: yes
+      when: "'web' in group_names"
+
+    - name: Configure nginx log forwarding (web)
+      lineinfile:
+        path: /etc/nginx/nginx.conf
+        insertafter: '^http {'
+        line: |
+          access_log syslog:server=192.168.56.15:514,tag=nginx_access,severity=info combined;
+          error_log syslog:server=192.168.56.15:514,tag=nginx_error;
+          error_log /var/log/nginx/error.log;
+        state: present
+      notify: restart nginx
+      when: "'web' in group_names"
+
+    - name: Ensure auditd is installed (web)
+      apt:
+        name: auditd
+        state: present
+        update_cache: yes
+      when: "'web' in group_names"
+
+    - name: Add audit rules for nginx (web)
+      lineinfile:
+        path: /etc/audit/rules.d/audit.rules
+        line: "{{ item }}"
+        create: yes
+        state: present
+      with_items:
+        - "-w /etc/nginx/nginx.conf -p wa -k nginx_conf"
+        - "-w /etc/nginx/sites-enabled/ -p wa -k nginx_conf"
+        - "-w /etc/nginx/sites-available/ -p wa -k nginx_conf"
+      notify: restart auditd
+      when: "'web' in group_names"
+
+  handlers:
+    - name: restart rsyslog
+      systemd:
+        name: rsyslog
+        state: restarted
+
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
+
+    - name: restart auditd
+      systemd:
+        name: auditd
+        state: restarted
