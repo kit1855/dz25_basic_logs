@@ -8,8 +8,8 @@ Vagrant.configure("2") do |config|
   end
 
   boxes = [
-    { :name => "web", :ip => "192.168.56.10" },
-    { :name => "log", :ip => "192.168.56.15" }
+    { :name => "log", :ip => "192.168.56.20" },
+    { :name => "web", :ip => "192.168.56.25" }
   ]
 
   boxes.each do |opts|
@@ -19,24 +19,30 @@ Vagrant.configure("2") do |config|
 
       if opts[:name] == "web"
         config.vm.provision "shell", inline: <<-SHELL
-          # Установка Ansible
+          # Wait for log VM to be ready
+          echo "Waiting for log VM (192.168.56.20) to be ready for SSH..."
+          while ! ssh -o ConnectTimeout=1 -o StrictHostKeyChecking=no vagrant@192.168.56.20 "echo 'SSH ready'" 2>/dev/null; do
+            sleep 2
+            echo -n "."
+          done
+          echo ""
+          echo "log VM is ready for SSH"
+
+          # Install Ansible
           sudo apt update
           sudo apt install -y ansible
 
-          # Создание директории для Ansible
+          # Prepare Ansible directory
           mkdir -p /home/vagrant/ansible
-
-          # Копирование плейбука и инвентаря
           cp /vagrant/ansible/site.yml /home/vagrant/ansible/
           cp /vagrant/ansible/inventory.yml /home/vagrant/ansible/
 
-          # Запуск Ansible
+          # Disable SSH key checking for the first connection
+          export ANSIBLE_HOST_KEY_CHECKING=False
+
+          # Run playbook
           cd /home/vagrant/ansible
           ansible-playbook -i inventory.yml site.yml
-        SHELL
-      else
-        config.vm.provision "shell", inline: <<-SHELL
-          echo "log VM is ready"
         SHELL
       end
     end
