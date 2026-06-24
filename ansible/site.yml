@@ -45,14 +45,12 @@
       when: "'web' in group_names"
 
     - name: Configure nginx log forwarding (web)
-      lineinfile:
-        path: /etc/nginx/nginx.conf
-        insertafter: '^http {'
-        line: |
+      copy:
+        dest: /etc/nginx/conf.d/logging.conf
+        content: |
           access_log syslog:server=192.168.56.15:514,tag=nginx_access,severity=info combined;
           error_log syslog:server=192.168.56.15:514,tag=nginx_error;
           error_log /var/log/nginx/error.log;
-        state: present
       notify: restart nginx
       when: "'web' in group_names"
 
