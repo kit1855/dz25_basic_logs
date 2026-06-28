@@ -3,7 +3,7 @@ ENV['VAGRANT_SERVER_URL'] = 'https://vagrant.elab.pro'
 Vagrant.configure("2") do |config|
   config.vm.box = "ubuntu/jammy64"
   config.vm.provider :virtualbox do |v|
-    v.memory = 4096
+    v.memory = 1024
     v.cpus = 2
   end
 
@@ -23,28 +23,41 @@ Vagrant.configure("2") do |config|
 
         config.vm.provision "shell" do |shell|
           shell.inline = <<-SHELL
-            # Установка Ansible и sshpass
+            # Установка Ansible
             apt update
-            apt install -y ansible sshpass
+            apt install -y ansible
 
-            # Генерация SSH-ключа для пользователя vagrant
-            sudo -u vagrant ssh-keygen -t rsa -b 2048 -f /home/vagrant/.ssh/id_rsa -q -N ""
+            # Копирование Vagrant-ключей с хоста на master
+            mkdir -p /home/vagrant/.ssh
+            cp /vagrant/.vagrant/machines/web/virtualbox/private_key /home/vagrant/.ssh/web_key
+            cp /vagrant/.vagrant/machines/log/virtualbox/private_key /home/vagrant/.ssh/log_key
+            chmod 600 /home/vagrant/.ssh/*_key
 
-            # Добавление хостов в known_hosts для пользователя vagrant
-            sudo -u vagrant ssh-keyscan 192.168.56.10 >> /home/vagrant/.ssh/known_hosts
-            sudo -u vagrant ssh-keyscan 192.168.56.15 >> /home/vagrant/.ssh/known_hosts
+            # Создание SSH-конфига для использования этих ключей
+            cat > /home/vagrant/.ssh/config <<EOF
+Host web
+    HostName 192.168.56.10
+    User vagrant
+    IdentityFile /home/vagrant/.ssh/web_key
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
 
-            # Копирование ключей на web и log (от имени vagrant)
-            sudo -u vagrant sshpass -p "vagrant" ssh-copy-id -i /home/vagrant/.ssh/id_rsa.pub vagrant@192.168.56.10
-            sudo -u vagrant sshpass -p "vagrant" ssh-copy-id -i /home/vagrant/.ssh/id_rsa.pub vagrant@192.168.56.15
+Host log
+    HostName 192.168.56.15
+    User vagrant
+    IdentityFile /home/vagrant/.ssh/log_key
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+EOF
+            chmod 600 /home/vagrant/.ssh/config
 
-            # Проверка подключения (для отладки)
-            sudo -u vagrant ssh -o StrictHostKeyChecking=no vagrant@192.168.56.10 "echo 'Connected to web'"
-            sudo -u vagrant ssh -o StrictHostKeyChecking=no vagrant@192.168.56.15 "echo 'Connected to log'"
+            # Проверка подключения
+            ssh -T web "echo 'Connected to web'"
+            ssh -T log "echo 'Connected to log'"
 
-            # Запуск Ansible playbook от имени vagrant
+            # Запуск Ansible playbook
             cd /home/vagrant/ansible
-            sudo -u vagrant ansible-playbook -i inventory.yml playbook.yml -v
+            ansible-playbook -i inventory.yml playbook.yml -v
           SHELL
         end
       end
