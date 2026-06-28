@@ -1,3 +1,176 @@
+---
+- name: Настройка web-сервера (nginx)
+  hosts: web
+  gather_facts: no
+  become: yes
+  tasks:
+    - name: Установить nginx
+      apt:
+        name: nginx
+        state: present
+        update_cache: yes
+
+    - name: Запустить и включить nginx
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: Настроить отправку access_log на log-сервер
+      lineinfile:
+        path: /etc/nginx/nginx.conf
+        regexp: '^    access_log syslog:server='
+        line: '    access_log syslog:server=192.168.56.15:514,tag=nginx_access,severity=info combined;'
+        insertafter: '^http {'
+
+    - name: Настроить отправку error_log на log-сервер (удаленно)
+      lineinfile:
+        path: /etc/nginx/nginx.conf
+        regexp: '^    error_log syslog:server='
+        line: '    error_log syslog:server=192.168.56.15:514,tag=nginx_error;'
+        insertafter: '^http {'
+
+    - name: Убедиться, что error_log пишется локально (критичные логи)
+      lineinfile:
+        path: /etc/nginx/nginx.conf
+        regexp: '^error_log /var/log/nginx/error.log;'
+        line: 'error_log /var/log/nginx/error.log;'
+        insertbefore: '^http {'
+
+    - name: Проверить конфигурацию nginx
+      command: nginx -t
+      register: nginx_test
+      changed_when: false
+
+    - name: Перезапустить nginx если конфигурация валидна
+      service:
+        name: nginx
+        state: restarted
+      when: nginx_test.rc == 0
+
+    - name: Установить auditd
+      apt:
+        name:
+          - auditd
+          - audispd-plugins
+        state: present
+
+    - name: Запустить и включить auditd
+      service:
+        name: auditd
+        state: started
+        enabled: yes
+
+    - name: Создать правила аудита для конфигов nginx
+      copy:
+        dest: /etc/audit/rules.d/nginx.rules
+        content: |
+          -w /etc/nginx/nginx.conf -p wa -k nginx_conf
+          -w /etc/nginx/sites-enabled/ -p wa -k nginx_conf
+          -w /etc/nginx/sites-available/ -p wa -k nginx_conf
+        owner: root
+        group: root
+        mode: '0640'
+
+    - name: Загрузить правила аудита
+      command: auditctl -R /etc/audit/rules.d/nginx.rules
+      register: audit_rules
+      changed_when: "'No rules' not in audit_rules.stdout"
+
+    - name: Проверить загруженные правила аудита
+      command: auditctl -l
+      register: audit_list
+      changed_when: false
+
+    - name: Активировать плагин syslog для auditd
+      lineinfile:
+        path: /etc/audit/plugins.d/syslog.conf
+        regexp: '^active = no'
+        line: 'active = yes'
+        backup: yes
+
+    - name: Создать конфигурацию rsyslog для отправки audit.log
+      copy:
+        dest: /etc/rsyslog.d/99-audit.conf
+        content: |
+          module(load="imfile" PollingInterval="5")
+          
+          input(type="imfile" File="/var/log/audit/audit.log" Tag="audit" Severity="info" Facility="local7")
+          
+          if $programname == 'audit' then @@192.168.56.15:514
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Перезапустить auditd и rsyslog
+      service:
+        name: "{{ item }}"
+        state: restarted
+      loop:
+        - auditd
+        - rsyslog
+
+
+- name: Настройка log-сервера (rsyslog)
+  hosts: log
+  gather_facts: no
+  become: yes
+  tasks:
+    - name: Установить rsyslog (обычно уже установлен)
+      apt:
+        name: rsyslog
+        state: present
+        update_cache: yes
+
+    - name: Настроить rsyslog как сервер (включить UDP и TCP)
+      lineinfile:
+        path: /etc/rsyslog.conf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^#module\(load="imudp"\)', line: 'module(load="imudp")' }
+        - { regexp: '^#input\(type="imudp" port="514"\)', line: 'input(type="imudp" port="514")' }
+        - { regexp: '^#module\(load="imtcp"\)', line: 'module(load="imtcp")' }
+        - { regexp: '^#input\(type="imtcp" port="514"\)', line: 'input(type="imtcp" port="514")' }
+
+    - name: Добавить шаблон для удаленных логов
+      lineinfile:
+        path: /etc/rsyslog.conf
+        line: |
+          $template RemoteLogs, "/var/log/rsyslog/%HOSTNAME%/%PROGRAMNAME%.log"
+          *.* ?RemoteLogs
+        insertafter: '^#### RULES ####'
+        create: yes
+
+    - name: Создать директорию для логов
+      file:
+        path: /var/log/rsyslog/web
+        state: directory
+        owner: syslog
+        group: adm
+        mode: '0755'
+
+    - name: Проверить конфигурацию rsyslog
+      command: rsyslogd -f /etc/rsyslog.conf -N1
+      register: rsyslog_test
+      changed_when: false
+      failed_when: false
+
+    - name: Перезапустить rsyslog
+      service:
+        name: rsyslog
+        state: restarted
+
+    - name: Убедиться, что порт 514 открыт
+      shell: ss -tln | grep ':514'
+      register: port_check
+      changed_when: false
+
+    - name: Вывести результат проверки порта
+      debug:
+        msg: "Порт 514 слушается: {{ port_check.stdout }}"
+
+
 - name: Интеграционные проверки (запускаются с master)
   hosts: localhost
   connection: local
