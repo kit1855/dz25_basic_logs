@@ -1,0 +1,12 @@
+all:
+  children:
+    web_group:
+      hosts:
+        web:
+          ansible_host: 192.168.56.10
+          ansible_user: vagrant
+    log_group:
+      hosts:
+        log:
+          ansible_host: 192.168.56.15
+          ansible_user: vagrant
