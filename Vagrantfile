@@ -37,7 +37,13 @@ Vagrant.configure("2") do |config|
             cp /vagrant/.vagrant/machines/log/virtualbox/private_key /home/vagrant/.ssh/log_key
             chmod 600 /home/vagrant/.ssh/*_key
 
-            # Создание SSH-конфига для использования этих ключей
+            # Добавление хостов в known_hosts (принудительно)
+            ssh-keyscan -H 192.168.56.10 >> /home/vagrant/.ssh/known_hosts
+            ssh-keyscan -H 192.168.56.15 >> /home/vagrant/.ssh/known_hosts
+            ssh-keyscan -H web >> /home/vagrant/.ssh/known_hosts
+            ssh-keyscan -H log >> /home/vagrant/.ssh/known_hosts
+
+            # Создание SSH-конфига
             cat > /home/vagrant/.ssh/config <<EOF
 Host web
     HostName 192.168.56.10
@@ -54,10 +60,11 @@ Host log
     UserKnownHostsFile /dev/null
 EOF
             chmod 600 /home/vagrant/.ssh/config
+            chmod 600 /home/vagrant/.ssh/known_hosts
 
-            # Проверка подключения
-            ssh -T web "echo 'Connected to web'"
-            ssh -T log "echo 'Connected to log'"
+            # Проверка подключения с явными параметрами
+            ssh -o StrictHostKeyChecking=no -i /home/vagrant/.ssh/web_key vagrant@192.168.56.10 "echo 'Connected to web'"
+            ssh -o StrictHostKeyChecking=no -i /home/vagrant/.ssh/log_key vagrant@192.168.56.15 "echo 'Connected to log'"
 
             # Запуск Ansible playbook
             cd /home/vagrant/ansible
