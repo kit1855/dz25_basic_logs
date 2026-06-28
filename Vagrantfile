@@ -23,6 +23,10 @@ Vagrant.configure("2") do |config|
 
         config.vm.provision "shell" do |shell|
           shell.inline = <<-SHELL
+            # Добавление записей в /etc/hosts для резолвинга имен
+            echo "192.168.56.10 web" >> /etc/hosts
+            echo "192.168.56.15 log" >> /etc/hosts
+
             # Установка Ansible
             apt update
             apt install -y ansible
