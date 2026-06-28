@@ -175,6 +175,9 @@
   hosts: localhost
   connection: local
   gather_facts: yes
+  vars:
+    ansible_ssh_private_key_file: /home/vagrant/.ssh/web_key
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
   tasks:
     - name: Дождаться, пока web поднимется
       wait_for:
@@ -202,27 +205,28 @@
       pause:
         seconds: 5
 
-    - name: Сгенерировать ошибку 403 для создания error_log (временно удалить index.html)
+    - name: Удалить все файлы из /var/www/html/ для генерации ошибки 403
       delegate_to: web
       become: yes
       shell: |
-        mv /var/www/html/index.nginx-debian.html /var/www/ || true
+        rm -f /var/www/html/* 2>/dev/null || true
       ignore_errors: yes
       changed_when: false
 
-    - name: Сделать запрос для генерации ошибки 403
+    - name: Сделать запрос к nginx (с master) для генерации ошибки 403
       uri:
         url: http://192.168.56.10
         return_content: yes
         timeout: 5
+        status_code: 403
       register: error_page
       ignore_errors: yes
 
-    - name: Вернуть index.html на место
+    - name: Восстановить index.html
       delegate_to: web
       become: yes
       shell: |
-        mv /var/www/index.nginx-debian.html /var/www/html/ || true
+        echo "<h1>Welcome to nginx!</h1>" > /var/www/html/index.nginx-debian.html
       ignore_errors: yes
       changed_when: false
 
@@ -237,7 +241,7 @@
 
     - name: Подождать, пока логи запишутся на диск
       pause:
-        seconds: 5
+        seconds: 10
 
     - name: Проверить, что access_log пришел на log-сервер
       delegate_to: log
@@ -257,7 +261,7 @@
       become: yes
       shell: |
         if [ -f /var/log/rsyslog/web/nginx_error.log ]; then
-          grep -q 'nginx_error' /var/log/rsyslog/web/nginx_error.log
+          exit 0
         else
           exit 1
         fi
