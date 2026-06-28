@@ -243,41 +243,29 @@
       pause:
         seconds: 10
 
-    - name: Проверить, что access_log пришел на log-сервер
+    - name: Проверить access_log на log-сервере (поиск строки)
       delegate_to: log
       become: yes
       shell: |
-        if [ -f /var/log/rsyslog/web/nginx_access.log ]; then
-          grep -q 'nginx_access' /var/log/rsyslog/web/nginx_access.log
-        else
-          exit 1
-        fi
+        grep -q 'nginx_access' /var/log/rsyslog/web/nginx_access.log
       register: access_log_check
       ignore_errors: yes
       changed_when: false
 
-    - name: Проверить, что error_log пришел на log-сервер
+    - name: Проверить error_log на log-сервере (поиск строки)
       delegate_to: log
       become: yes
       shell: |
-        if [ -f /var/log/rsyslog/web/nginx_error.log ]; then
-          exit 0
-        else
-          exit 1
-        fi
+        grep -q 'nginx_error' /var/log/rsyslog/web/nginx_error.log
       register: error_log_check
       ignore_errors: yes
       changed_when: false
 
-    - name: Проверить, что событие аудита пришло на log-сервер
+    - name: Проверить audit.log на log-сервере (поиск ключа)
       delegate_to: log
       become: yes
       shell: |
-        if [ -f /var/log/rsyslog/web/audit.log ]; then
-          grep -q 'nginx_conf' /var/log/rsyslog/web/audit.log
-        else
-          exit 1
-        fi
+        grep -q 'nginx_conf' /var/log/rsyslog/web/audit.log
       register: audit_log_check
       ignore_errors: yes
       changed_when: false
@@ -294,7 +282,7 @@
           - "Audit_log доставлен: {{ '✅' if audit_log_check.rc == 0 else '❌' }}"
           - "========================================="
 
-    - name: Финальный статус
+    - name: Финальный статус (все проверки должны пройти)
       fail:
         msg: "Одна или несколько проверок не пройдены. Смотрите вывод выше."
       when: >
@@ -302,4 +290,3 @@
         access_log_check.rc != 0 or
         error_log_check.rc != 0 or
         audit_log_check.rc != 0
-      ignore_errors: yes
