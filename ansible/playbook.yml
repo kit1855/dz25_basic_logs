@@ -195,13 +195,16 @@
         that:
           - webpage.status == 200
           - "'Welcome to nginx' in webpage.content"
-        fail_msg: "❌ Nginx не отвечает или страница не содержит 'Welcome to nginx'"
-        success_msg: "✅ Nginx отвечает корректно"
+        fail_msg: "Nginx не отвечает или страница не содержит 'Welcome to nginx'"
+        success_msg: "Nginx отвечает корректно"
 
     - name: Сгенерировать ошибку 403 (временно удалить index.html)
+      delegate_to: web
+      become: yes
       shell: |
-        ssh -o StrictHostKeyChecking=no vagrant@192.168.56.10 "sudo mv /var/www/html/index.nginx-debian.html /var/www/ || true"
+        mv /var/www/html/index.nginx-debian.html /var/www/ || true
       ignore_errors: yes
+      changed_when: false
 
     - name: Сделать запрос для генерации ошибки 403
       uri:
@@ -212,27 +215,39 @@
       ignore_errors: yes
 
     - name: Вернуть index.html на место
+      delegate_to: web
+      become: yes
       shell: |
-        ssh -o StrictHostKeyChecking=no vagrant@192.168.56.10 "sudo mv /var/www/index.nginx-debian.html /var/www/html/ || true"
+        mv /var/www/index.nginx-debian.html /var/www/html/ || true
       ignore_errors: yes
+      changed_when: false
 
     - name: Проверить, что access_log пришел на log-сервер
+      delegate_to: log
+      become: yes
       shell: |
-        ssh -o StrictHostKeyChecking=no vagrant@192.168.56.15 "grep -q 'nginx_access' /var/log/rsyslog/web/nginx_access.log"
+        grep -q 'nginx_access' /var/log/rsyslog/web/nginx_access.log
       register: access_log_check
       ignore_errors: yes
+      changed_when: false
 
     - name: Проверить, что error_log пришел на log-сервер
+      delegate_to: log
+      become: yes
       shell: |
-        ssh -o StrictHostKeyChecking=no vagrant@192.168.56.15 "grep -q 'nginx_error' /var/log/rsyslog/web/nginx_error.log"
+        grep -q 'nginx_error' /var/log/rsyslog/web/nginx_error.log
       register: error_log_check
       ignore_errors: yes
+      changed_when: false
 
     - name: Проверить, что audit.log отправляется на log-сервер
+      delegate_to: log
+      become: yes
       shell: |
-        ssh -o StrictHostKeyChecking=no vagrant@192.168.56.15 "grep -q 'nginx_conf' /var/log/rsyslog/web/syslog"
+        grep -q 'nginx_conf' /var/log/rsyslog/web/syslog
       register: audit_log_check
       ignore_errors: yes
+      changed_when: false
 
     - name: Итоговый отчет по проверкам
       debug:
@@ -240,15 +255,15 @@
           - "========================================="
           - "📋 РЕЗУЛЬТАТЫ ПРОВЕРОК:"
           - "========================================="
-          - "✅ Nginx доступен: {{ '✅' if webpage.status == 200 else '❌' }}"
-          - "✅ Access_log доставлен: {{ '✅' if access_log_check.rc == 0 else '❌' }}"
-          - "✅ Error_log доставлен: {{ '✅' if error_log_check.rc == 0 else '❌' }}"
-          - "✅ Audit_log доставлен: {{ '✅' if audit_log_check.rc == 0 else '❌' }}"
+          - "Nginx доступен: {{ '✅' if webpage.status == 200 else '❌' }}"
+          - "Access_log доставлен: {{ '✅' if access_log_check.rc == 0 else '❌' }}"
+          - "Error_log доставлен: {{ '✅' if error_log_check.rc == 0 else '❌' }}"
+          - "Audit_log доставлен: {{ '✅' if audit_log_check.rc == 0 else '❌' }}"
           - "========================================="
 
     - name: Финальный статус (ошибка, если что-то не так)
       fail:
-        msg: "❌ Одна или несколько проверок не пройдены. Смотрите вывод выше."
+        msg: "Одна или несколько проверок не пройдены. Смотрите вывод выше."
       when: >
         webpage.status != 200 or
         access_log_check.rc != 0 or
