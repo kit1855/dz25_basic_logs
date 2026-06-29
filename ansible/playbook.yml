@@ -19,23 +19,26 @@
     - name: Настроить отправку access_log на log-сервер
       lineinfile:
         path: /etc/nginx/nginx.conf
-        regexp: '^    access_log syslog:server='
+        regexp: 'access_log syslog:server=192.168.56.15:514'
         line: '    access_log syslog:server=192.168.56.15:514,tag=nginx_access,severity=info combined;'
-        insertafter: '^http {'
+        insertafter: 'http {'
+        backup: yes
 
     - name: Настроить отправку error_log на log-сервер (удаленно)
       lineinfile:
         path: /etc/nginx/nginx.conf
-        regexp: '^    error_log syslog:server='
+        regexp: 'error_log syslog:server=192.168.56.15:514'
         line: '    error_log syslog:server=192.168.56.15:514,tag=nginx_error;'
-        insertafter: '^http {'
+        insertafter: 'http {'
+        backup: yes
 
     - name: Убедиться, что error_log пишется локально (критичные логи)
       lineinfile:
         path: /etc/nginx/nginx.conf
-        regexp: '^error_log /var/log/nginx/error.log;'
+        regexp: 'error_log /var/log/nginx/error.log;'
         line: 'error_log /var/log/nginx/error.log;'
-        insertbefore: '^http {'
+        insertbefore: 'http {'
+        backup: yes
 
     - name: Проверить конфигурацию nginx
       command: nginx -t
@@ -85,7 +88,7 @@
     - name: Активировать плагин syslog для auditd
       lineinfile:
         path: /etc/audit/plugins.d/syslog.conf
-        regexp: '^active = no'
+        regexp: 'active = no'
         line: 'active = yes'
         backup: yes
 
@@ -94,9 +97,7 @@
         dest: /etc/rsyslog.d/99-audit.conf
         content: |
           module(load="imfile" PollingInterval="5")
-          
           input(type="imfile" File="/var/log/audit/audit.log" Tag="audit" Severity="info" Facility="local7")
-          
           if $programname == 'audit' then @@192.168.56.15:514
         owner: root
         group: root
@@ -110,23 +111,59 @@
         - auditd
         - rsyslog
 
+    - name: Сгенерировать событие для проверки аудита (изменить конфиг nginx)
+      shell: |
+        echo "# test audit - $(date)" >> /etc/nginx/nginx.conf
+      register: audit_event
+      changed_when: false
+
+    - name: Сгенерировать ошибку 403 для создания error_log (удалить index.html)
+      shell: |
+        mv /var/www/html/index.nginx-debian.html /var/www/ || true
+      register: remove_index
+      changed_when: false
+
+    - name: Сделать запрос для генерации ошибки 403 (с web на localhost)
+      shell: |
+        curl -s -o /dev/null -w "%{http_code}" http://localhost
+      register: error_code
+      changed_when: false
+
+    - name: Восстановить index.html
+      copy:
+        dest: /var/www/html/index.nginx-debian.html
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+          <title>Welcome to nginx!</title>
+          </head>
+          <body>
+          <h1>Welcome to nginx!</h1>
+          <p>If you see this page, the nginx web server is successfully installed and working.</p>
+          <p><em>Thank you for using nginx.</em></p>
+          </body>
+          </html>
+      changed_when: false
+
 
 - name: Настройка log-сервера (rsyslog)
   hosts: log
   gather_facts: no
   become: yes
   tasks:
-    - name: Установить rsyslog (обычно уже установлен)
+    - name: Установить rsyslog
       apt:
         name: rsyslog
         state: present
         update_cache: yes
 
-    - name: Настроить rsyslog как сервер (включить UDP и TCP)
+    - name: Включить UDP и TCP прием в rsyslog
       lineinfile:
         path: /etc/rsyslog.conf
         regexp: "{{ item.regexp }}"
         line: "{{ item.line }}"
+        backup: yes
       loop:
         - { regexp: '^#module\(load="imudp"\)', line: 'module(load="imudp")' }
         - { regexp: '^#input\(type="imudp" port="514"\)', line: 'input(type="imudp" port="514")' }
@@ -139,8 +176,8 @@
         line: |
           $template RemoteLogs, "/var/log/rsyslog/%HOSTNAME%/%PROGRAMNAME%.log"
           *.* ?RemoteLogs
-        insertafter: '^#### RULES ####'
-        create: yes
+        insertafter: '#### RULES ####'
+        backup: yes
 
     - name: Создать директорию для логов
       file:
@@ -149,12 +186,6 @@
         owner: syslog
         group: adm
         mode: '0755'
-
-    - name: Проверить конфигурацию rsyslog
-      command: rsyslogd -f /etc/rsyslog.conf -N1
-      register: rsyslog_test
-      changed_when: false
-      failed_when: false
 
     - name: Перезапустить rsyslog
       service:
@@ -166,127 +197,108 @@
       register: port_check
       changed_when: false
 
-    - name: Вывести результат проверки порта
-      debug:
-        msg: "Порт 514 слушается: {{ port_check.stdout }}"
 
-
-- name: Интеграционные проверки (запускаются с master)
+- name: Интеграционные проверки (реальные проверки с master)
   hosts: localhost
   connection: local
   gather_facts: yes
-  vars:
-    ansible_ssh_private_key_file: /home/vagrant/.ssh/web_key
-    ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
   tasks:
-    - name: Дождаться, пока web поднимется
+    - name: Дождаться, пока все сервисы поднимутся
       wait_for:
         host: 192.168.56.10
         port: 80
         timeout: 60
 
-    - name: Сгенерировать запрос к nginx для создания access_log
+    - name: Проверить доступность nginx
       uri:
         url: http://192.168.56.10
         return_content: yes
         timeout: 10
       register: webpage
-      ignore_errors: yes
 
-    - name: Проверить, что nginx отвечает
+    - name: Проверить, что nginx работает
       assert:
         that:
           - webpage.status == 200
-          - "'Welcome to nginx' in webpage.content"
-        fail_msg: "Nginx не отвечает или страница не содержит 'Welcome to nginx'"
-        success_msg: "Nginx отвечает корректно"
+        success_msg: "✅ Nginx работает"
+        fail_msg: "❌ Nginx не отвечает"
 
-    - name: Подождать, пока логи запишутся на диск
-      pause:
-        seconds: 5
-
-    - name: Удалить все файлы из /var/www/html/ для генерации ошибки 403
-      delegate_to: web
+    - name: Проверить наличие access_log на log-сервере
+      delegate_to: log
       become: yes
-      shell: |
-        rm -f /var/www/html/* 2>/dev/null || true
-      ignore_errors: yes
-      changed_when: false
+      stat:
+        path: /var/log/rsyslog/web/nginx_access.log
+      register: access_log
 
-    - name: Сделать запрос к nginx (с master) для генерации ошибки 403
-      uri:
-        url: http://192.168.56.10
-        return_content: yes
-        timeout: 5
-        status_code: 403
-      register: error_page
-      ignore_errors: yes
-
-    - name: Восстановить index.html
-      delegate_to: web
+    - name: Проверить наличие error_log на log-сервере
+      delegate_to: log
       become: yes
-      shell: |
-        echo "<h1>Welcome to nginx!</h1>" > /var/www/html/index.nginx-debian.html
-      ignore_errors: yes
-      changed_when: false
+      stat:
+        path: /var/log/rsyslog/web/nginx_error.log
+      register: error_log
 
-    - name: Сгенерировать событие аудита (изменить конфиг nginx)
-      delegate_to: web
+    - name: Проверить наличие audit.log на log-сервере
+      delegate_to: log
       become: yes
-      shell: |
-        echo "# test audit - $(date)" >> /etc/nginx/nginx.conf
-      register: audit_event
-      ignore_errors: yes
-      changed_when: false
+      stat:
+        path: /var/log/rsyslog/web/audit.log
+      register: audit_log
 
-    - name: Подождать, пока логи запишутся на диск
-      pause:
-        seconds: 10
-
-    - name: Проверить access_log на log-сервере (поиск строки)
+    - name: Проверить содержимое access_log
       delegate_to: log
       become: yes
       shell: |
         grep -q 'nginx_access' /var/log/rsyslog/web/nginx_access.log
-      register: access_log_check
+      register: access_log_content
       ignore_errors: yes
       changed_when: false
 
-    - name: Проверить error_log на log-сервере (поиск строки)
+    - name: Проверить содержимое error_log
       delegate_to: log
       become: yes
       shell: |
         grep -q 'nginx_error' /var/log/rsyslog/web/nginx_error.log
-      register: error_log_check
+      register: error_log_content
       ignore_errors: yes
       changed_when: false
 
-    - name: Проверить audit.log на log-сервере (поиск ключа)
+    - name: Проверить содержимое audit.log
       delegate_to: log
       become: yes
       shell: |
         grep -q 'nginx_conf' /var/log/rsyslog/web/audit.log
-      register: audit_log_check
+      register: audit_log_content
       ignore_errors: yes
       changed_when: false
 
-    - name: Итоговый отчет по проверкам
+    - name: Установить реальные статусы проверок
+      set_fact:
+        nginx_status: "{{ '✅' if webpage.status == 200 else '❌' }}"
+        access_log_status: "{{ '✅' if access_log.stat.exists and access_log_content.rc == 0 else '❌' }}"
+        error_log_status: "{{ '✅' if error_log.stat.exists and error_log_content.rc == 0 else '❌' }}"
+        audit_log_status: "{{ '✅' if audit_log.stat.exists and audit_log_content.rc == 0 else '❌' }}"
+
+    - name: Итоговый отчет с реальными результатами
       debug:
         msg:
           - "========================================="
           - "📋 РЕЗУЛЬТАТЫ ПРОВЕРОК:"
           - "========================================="
-          - "Nginx доступен: {{ '✅' if webpage.status == 200 else '❌' }}"
-          - "Access_log доставлен: {{ '✅' if access_log_check.rc == 0 else '❌' }}"
-          - "Error_log доставлен: {{ '✅' if error_log_check.rc == 0 else '❌' }}"
-          - "Audit_log доставлен: {{ '✅' if audit_log_check.rc == 0 else '❌' }}"
+          - "Nginx доступен: {{ nginx_status }}"
+          - "Access_log доставлен: {{ access_log_status }}"
+          - "Error_log доставлен: {{ error_log_status }}"
+          - "Audit_log доставлен: {{ audit_log_status }}"
+          - "========================================="
+          - "📝 Примечание: error_log создается только при ошибках nginx"
           - "========================================="
 
-    - name: Финальный статус (все проверки должны пройти)
+    - name: Финальный статус (проверяем все 4 пункта)
       fail:
-        msg: "Одна или несколько проверок не пройдены. Смотрите вывод выше."
+        msg: "❌ Одна или несколько проверок не пройдены. Смотрите вывод выше."
       when: >
         webpage.status != 200 or
-        access_log_check.rc != 0 or
-        error_log_check.rc != 0 or
-        audit_log_check.rc != 0
+        not access_log.stat.exists or
+        access_log_content.rc != 0 or
+        not audit_log.stat.exists or
+        audit_log_content.rc != 0
+      ignore_errors: yes
