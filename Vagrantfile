@@ -23,15 +23,7 @@ Vagrant.configure("2") do |config|
         config.vm.provision "shell" do |shell|
           shell.inline = <<-SHELL
             apt update
-            apt install -y ansible sshpass
-
-            # Добавляем хосты в known_hosts
-            ssh-keyscan 192.168.56.10 >> /home/vagrant/.ssh/known_hosts
-            ssh-keyscan 192.168.56.15 >> /home/vagrant/.ssh/known_hosts
-
-            # Копируем ключи с помощью пароля
-            sshpass -p "vagrant" ssh-copy-id vagrant@192.168.56.10
-            sshpass -p "vagrant" ssh-copy-id vagrant@192.168.56.15
+            apt install -y ansible
 
             cd /home/vagrant/ansible
             ansible-playbook -i inventory.yml playbook.yml -v
