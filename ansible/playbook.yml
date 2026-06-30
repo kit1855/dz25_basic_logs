@@ -198,85 +198,89 @@
       changed_when: false
 
 
-- name: Интеграционные проверки (реальные проверки с master)
+- name: Интеграционные проверки (запускаются с master)
   hosts: localhost
   connection: local
   gather_facts: yes
   tasks:
-    - name: Дождаться, пока все сервисы поднимутся
+    - name: Дождаться, пока web поднимется
       wait_for:
         host: 192.168.56.10
         port: 80
         timeout: 60
 
-    - name: Проверить доступность nginx
+    - name: Сгенерировать запрос к nginx для создания access_log
       uri:
         url: http://192.168.56.10
         return_content: yes
         timeout: 10
       register: webpage
+      ignore_errors: yes
 
-    - name: Проверить, что nginx работает
+    - name: Проверить, что nginx отвечает
       assert:
         that:
           - webpage.status == 200
         success_msg: "✅ Nginx работает"
         fail_msg: "❌ Nginx не отвечает"
 
-    - name: Проверить наличие access_log на log-сервере
-      delegate_to: log
+    - name: Сгенерировать ошибку 403 (временно удалить index.html) - через delegate_to
+      delegate_to: web
       become: yes
-      stat:
-        path: /var/log/rsyslog/web/nginx_access.log
-      register: access_log
+      shell: |
+        mv /var/www/html/index.nginx-debian.html /var/www/ || true
+      ignore_errors: yes
+      changed_when: false
 
-    - name: Проверить наличие error_log на log-сервере
-      delegate_to: log
+    - name: Сделать запрос для генерации ошибки 403
+      uri:
+        url: http://192.168.56.10
+        return_content: yes
+        timeout: 5
+      register: error_page
+      ignore_errors: yes
+
+    - name: Вернуть index.html на место - через delegate_to
+      delegate_to: web
       become: yes
-      stat:
-        path: /var/log/rsyslog/web/nginx_error.log
-      register: error_log
+      shell: |
+        mv /var/www/index.nginx-debian.html /var/www/html/ || true
+      ignore_errors: yes
+      changed_when: false
 
-    - name: Проверить наличие audit.log на log-сервере
-      delegate_to: log
-      become: yes
-      stat:
-        path: /var/log/rsyslog/web/audit.log
-      register: audit_log
-
-    - name: Проверить содержимое access_log
+    - name: Проверить, что access_log пришел на log-сервер - через delegate_to
       delegate_to: log
       become: yes
       shell: |
         grep -q 'nginx_access' /var/log/rsyslog/web/nginx_access.log
-      register: access_log_content
+      register: access_log_check
       ignore_errors: yes
       changed_when: false
 
-    - name: Проверить содержимое error_log
+    - name: Проверить, что error_log пришел на log-сервер - через delegate_to
       delegate_to: log
       become: yes
       shell: |
         grep -q 'nginx_error' /var/log/rsyslog/web/nginx_error.log
-      register: error_log_content
+      register: error_log_check
       ignore_errors: yes
       changed_when: false
 
-    - name: Проверить содержимое audit.log
+    - name: Проверить, что audit.log отправляется на log-сервер - через delegate_to
       delegate_to: log
       become: yes
       shell: |
         grep -q 'nginx_conf' /var/log/rsyslog/web/audit.log
-      register: audit_log_content
+      register: audit_log_check
       ignore_errors: yes
       changed_when: false
 
     - name: Установить реальные статусы проверок
       set_fact:
         nginx_status: "{{ '✅' if webpage.status == 200 else '❌' }}"
-        access_log_status: "{{ '✅' if access_log.stat.exists and access_log_content.rc == 0 else '❌' }}"
-        error_log_status: "{{ '✅' if error_log.stat.exists and error_log_content.rc == 0 else '❌' }}"
-        audit_log_status: "{{ '✅' if audit_log.stat.exists and audit_log_content.rc == 0 else '❌' }}"
+        access_log_status: "{{ '✅' if access_log_check.rc == 0 else '❌' }}"
+        error_log_status: "{{ '✅' if error_log_check.rc == 0 else '❌' }}"
+        audit_log_status: "{{ '✅' if audit_log_check.rc == 0 else '❌' }}"
 
     - name: Итоговый отчет с реальными результатами
       debug:
@@ -289,16 +293,13 @@
           - "Error_log доставлен: {{ error_log_status }}"
           - "Audit_log доставлен: {{ audit_log_status }}"
           - "========================================="
-          - "📝 Примечание: error_log создается только при ошибках nginx"
-          - "========================================="
 
     - name: Финальный статус (проверяем все 4 пункта)
       fail:
         msg: "❌ Одна или несколько проверок не пройдены. Смотрите вывод выше."
       when: >
         webpage.status != 200 or
-        not access_log.stat.exists or
-        access_log_content.rc != 0 or
-        not audit_log.stat.exists or
-        audit_log_content.rc != 0
+        access_log_check.rc != 0 or
+        error_log_check.rc != 0 or
+        audit_log_check.rc != 0
       ignore_errors: yes
